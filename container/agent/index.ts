@@ -144,3 +144,4 @@ async function poll(): Promise<void> {
 console.log(`[nanoclaw-agent] Starting for group: ${GROUP_ID}`);
 setInterval(poll, 2000);
 poll();
+

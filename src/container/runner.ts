@@ -1,19 +1,32 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import path from 'path';
 import { logger } from '../logger';
 import { validateMountPath } from '../security/mountAllowlist';
 
 const GROUPS_DIR = path.join(process.env.HOME || '/root', 'nanoclaw', 'groups');
 const ONECLI_PORT = parseInt(process.env.ONECLI_PORT || '4891');
+const NETWORK_NAME = 'nanoclaw-net';
 
 export class ContainerRunner {
   private running = new Map<string, string>(); // groupId -> containerId
 
+  private ensureNetworkExists(): void {
+    try {
+      execFileSync('docker', ['network', 'inspect', NETWORK_NAME], { stdio: 'ignore' });
+    } catch {
+      logger.info({ network: NETWORK_NAME }, 'Creating Docker bridge network');
+      execFileSync('docker', ['network', 'create', NETWORK_NAME]);
+    }
+  }
+
   async ensureRunning(groupId: string): Promise<void> {
     if (this.running.has(groupId)) {
-      // Check if still alive
       try {
-        const out = execSync(`docker inspect -f '{{.State.Running}}' ${this.running.get(groupId)}`).toString().trim();
+        const containerId = this.running.get(groupId)!;
+        const out = execFileSync(
+          'docker', ['inspect', '-f', '{{.State.Running}}', containerId],
+          { encoding: 'utf8' }
+        ).trim();
         if (out === 'true') return;
       } catch {
         this.running.delete(groupId);
@@ -22,31 +35,39 @@ export class ContainerRunner {
 
     const groupDir = path.join(GROUPS_DIR, groupId);
 
-    // Validate mount path against allowlist
     if (!validateMountPath(groupDir)) {
       throw new Error(`Mount denied for group directory: ${groupDir}`);
     }
 
+    this.ensureNetworkExists();
+
     const containerName = `nanoclaw-agent-${groupId}`;
 
-    // Remove stopped container if exists
-    try { execSync(`docker rm -f ${containerName} 2>/dev/null`); } catch {}
+    try {
+      execFileSync('docker', ['rm', '-f', containerName], { stdio: 'ignore' });
+    } catch { /* container may not exist — that is fine */ }
 
     const args = [
       'run', '-d',
       '--name', containerName,
-      '--network', 'host',  // shares host network so OneCLI proxy is reachable
-      '--env', `ONECLI_PROXY=http://127.0.0.1:${ONECLI_PORT}`,
+      '--network', NETWORK_NAME,
+      '--add-host', 'host.docker.internal:host-gateway',
+      '--env', `ONECLI_PROXY=http://host.docker.internal:${ONECLI_PORT}`,
       '--env', `GROUP_ID=${groupId}`,
       '--env', `GROUP_DIR=/workspace/group`,
-      '--env', `ANTHROPIC_BASE_URL=http://127.0.0.1:${ONECLI_PORT}`,
+      '--env', `ANTHROPIC_BASE_URL=http://host.docker.internal:${ONECLI_PORT}`,
+      '--env', `OLLAMA_HOST=http://host.docker.internal:11434`,
       '-v', `${groupDir}:/workspace/group`,
       'nanoclaw-agent:latest',
     ];
 
     logger.info({ groupId, containerName }, 'Spawning agent container');
-    const result = execSync(`docker ${args.join(' ')}`).toString().trim();
-    this.running.set(groupId, result);
-    logger.info({ groupId, containerId: result }, 'Container started');
+    const containerId = execFileSync('docker', args, { encoding: 'utf8' }).trim();
+    this.running.set(groupId, containerId);
+    logger.info({ groupId, containerId }, 'Container started');
+  }
+
+  getRunningContainers(): Map<string, string> {
+    return new Map(this.running);
   }
 }

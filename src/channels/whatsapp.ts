@@ -7,10 +7,12 @@ import { logger } from '../logger';
 
 const AUTH_DIR = path.join(process.env.HOME || '/root', 'nanoclaw', 'data', 'whatsapp-auth');
 
+let waSocket: ReturnType<typeof makeWASocket> | null = null;
+
 export async function startWhatsApp(router: (msg: InboundMessage) => Promise<void>): Promise<void> {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-
   const sock = makeWASocket({ auth: state, printQRInTerminal: false });
+  waSocket = sock;
 
   sock.ev.on('creds.update', saveCreds);
 
@@ -22,7 +24,7 @@ export async function startWhatsApp(router: (msg: InboundMessage) => Promise<voi
     }
     if (connection === 'close') {
       const shouldReconnect = (lastDisconnect?.error as any)?.output?.statusCode !== DisconnectReason.loggedOut;
-      logger.info('WhatsApp disconnected. Reconnecting:', shouldReconnect);
+      logger.info({ shouldReconnect }, 'WhatsApp disconnected');
       if (shouldReconnect) startWhatsApp(router);
     } else if (connection === 'open') {
       logger.info('WhatsApp connected');
@@ -45,7 +47,6 @@ export async function startWhatsApp(router: (msg: InboundMessage) => Promise<voi
       if (m.message?.audioMessage) {
         type = 'voice';
         mimeType = 'audio/ogg';
-        // In production: download audio bytes and base64 encode
         content = '[voice note — transcription pending]';
       } else if (m.message?.imageMessage) {
         type = 'image';
@@ -67,4 +68,13 @@ export async function startWhatsApp(router: (msg: InboundMessage) => Promise<voi
       });
     }
   });
+}
+
+export async function sendWhatsApp(recipientId: string, content: string): Promise<void> {
+  if (!waSocket) {
+    logger.error({ recipientId }, 'WhatsApp socket not initialised — cannot send');
+    throw new Error('WhatsApp not connected');
+  }
+  await waSocket.sendMessage(recipientId, { text: content });
+  logger.debug({ recipientId }, 'WhatsApp message sent');
 }
