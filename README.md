@@ -429,3 +429,15 @@ nanoclaw/
 ## License
 
 MIT
+
+---
+
+## Production Fixes
+
+The following 17 hardening and correctness changes have been applied to this codebase:
+
+**Critical:** (1) `senderAllowlist.ts` now fails-closed — missing config throws an error and rejects all messages rather than permitting them; schema validation enforces `defaultMode` and `groups` shape. (2) `container/runner.ts` replaces all `execSync` shell-string calls with `execFileSync` and discrete argument arrays, eliminating shell injection. (3) Containers use a dedicated `nanoclaw-net` bridge network instead of `--network host`; `host.docker.internal` replaces `127.0.0.1` for OneCLI and Ollama. (4) `delivery/index.ts` dispatches messages for real via `sendWhatsApp`, `sendTelegram`, `sendWebUI`, and stdout — the previous stub only logged. (5) `container/agent/index.ts` wraps the full `processMessage` body in try/catch; each tool call has its own try/catch returning `is_error: true`; 5 consecutive tool errors abort the loop and write an error reply to `outbound.db`.
+
+**Important:** (6) Allowlist config is cached in memory and hot-reloaded via `fs.watch` — disk reads no longer happen per message; `reloadConfig()` and `closeAllowlistWatcher()` are exported for callers. (7) Scheduled tasks survive restarts — `scheduler/index.ts` persists tasks in `scheduler.db` and replays them with `loadPersistedTasks()` on startup; the cron callback injects prompts into `inbound.db`. (8) `mnemon/index.ts` stores embeddings via Ollama + `nomic-embed-text` in a `BLOB` column and implements `semanticSearch()` with cosine similarity, falling back to FTS5 if Ollama is unreachable. (9) Context injected into the system prompt is capped at 4,000 characters with a truncation note. (10) Every tool call is logged to `audit.db` with name, input, result (≤2,000 chars), duration, and timestamp. (11) `GET /health` returns container status, `last_inbound_at`, `last_outbound_at` per group, OneCLI reachability, and scheduler task count.
+
+**Nice-to-have:** (12) HTML extraction uses `@mozilla/readability` + `jsdom` instead of a regex strip, with a regex fallback on parse failure. (13) Ingested content is stored up to 50,000 characters with separate `title` and `summary` facts. (14) System prompt is fully structured with identity, knowledge-graph instructions, tool constraints, response format, and decline rules. (15) Token usage is recorded per message in `agent_costs` and accumulated in session-level counters exposed via `getSessionCost()`. (16) `mnemon: any` replaced with the exported `Mnemon` type in all tool files. (17) Graceful shutdown handles SIGTERM/SIGINT, propagates the `shuttingDown` flag to the router (which drops in-flight messages), drains the delivery poller, closes DB handles, and forces exit on a second signal.

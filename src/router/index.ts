@@ -10,6 +10,12 @@ const GROUPS_DIR = path.join(process.env.HOME || '/root', 'nanoclaw', 'groups');
 
 const containerRunner = new ContainerRunner();
 
+let isShuttingDown = false;
+
+export function setShuttingDown(value: boolean): void {
+  isShuttingDown = value;
+}
+
 export interface InboundMessage {
   id: string;
   groupId: string;
@@ -22,6 +28,12 @@ export interface InboundMessage {
 }
 
 export async function router(msg: InboundMessage): Promise<void> {
+  // Fix 17 — drop messages during graceful shutdown
+  if (isShuttingDown) {
+    logger.info({ groupId: msg.groupId }, 'Dropping message: shutting down');
+    return;
+  }
+
   // Validate group name
   if (!validateGroupName(msg.groupId)) {
     logger.warn({ groupId: msg.groupId }, 'Rejected: invalid group name');

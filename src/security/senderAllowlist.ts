@@ -86,3 +86,13 @@ export function checkSenderAllowed(groupId: string, senderId: string): boolean {
   logger.info({ senderId, groupId, mode }, 'Sender not in allowlist');
   return false;
 }
+
+export function reloadConfig(): void {
+  try {
+    cachedConfig = loadConfig();
+    logger.info('Sender allowlist force-reloaded');
+  } catch (err) {
+    logger.error({ err }, 'FATAL: sender-allowlist.json reload failed — all messages will be rejected');
+    cachedConfig = null;
+  }
+}

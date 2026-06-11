@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
+import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import { InboundMessage } from '../router';
 import { logger } from '../logger';
@@ -9,6 +11,7 @@ import { ContainerRunner } from '../container/runner';
 const WEB_HOST = process.env.WEB_HOST || '127.0.0.1';
 const WEB_PORT = parseInt(process.env.WEB_PORT || '3080');
 const ONECLI_PORT = parseInt(process.env.ONECLI_PORT || '4891');
+const GROUPS_DIR = path.join(process.env.HOME || '/root', 'nanoclaw', 'groups');
 
 // In-memory store for SSE clients keyed by recipientId (webui-user)
 const sseClients = new Map<string, express.Response[]>();
@@ -65,6 +68,18 @@ export function startWebUI(router: (msg: InboundMessage) => Promise<void>): void
   });
 }
 
+function queryLastTimestamp(dbPath: string, table: string, column: string): number | null {
+  try {
+    if (!fs.existsSync(dbPath)) return null;
+    const db = new Database(dbPath, { readonly: true });
+    const row = db.prepare(`SELECT MAX(${column}) as ts FROM ${table}`).get() as { ts: number | null } | undefined;
+    db.close();
+    return row?.ts ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function registerHealthRoute(
   app: express.Express,
   containerRunner: ContainerRunner,
@@ -72,9 +87,28 @@ export function registerHealthRoute(
 ): void {
   app.get('/health', async (req, res) => {
     const containers = containerRunner.getRunningContainers();
-    const groupsHealth: Record<string, { container_running: boolean }> = {};
-    for (const [groupId] of containers) {
-      groupsHealth[groupId] = { container_running: true };
+    const groupsHealth: Record<string, {
+      container_running: boolean;
+      last_inbound_at: number | null;
+      last_outbound_at: number | null;
+    }> = {};
+
+    // Include all known groups (from directories), not just running containers
+    const knownGroups = new Set<string>();
+    for (const [groupId] of containers) knownGroups.add(groupId);
+    try {
+      if (fs.existsSync(GROUPS_DIR)) {
+        for (const d of fs.readdirSync(GROUPS_DIR)) knownGroups.add(d);
+      }
+    } catch { /* ignore */ }
+
+    for (const groupId of knownGroups) {
+      const groupDir = path.join(GROUPS_DIR, groupId);
+      groupsHealth[groupId] = {
+        container_running: containers.has(groupId),
+        last_inbound_at: queryLastTimestamp(path.join(groupDir, 'inbound.db'), 'messages', 'timestamp'),
+        last_outbound_at: queryLastTimestamp(path.join(groupDir, 'outbound.db'), 'messages', 'timestamp'),
+      };
     }
 
     let onecliReachable = false;

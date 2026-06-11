@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs';
-import { router } from './router';
+import { router, setShuttingDown } from './router';
 import { startWebUI, registerHealthRoute } from './channels/webui';
 import { startCLI } from './channels/cli';
 import { startDelivery, flushAndClose } from './delivery';
@@ -26,6 +26,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   }
   shutdownInProgress = true;
   shuttingDown = true;
+  setShuttingDown(true);
   logger.info({ signal }, 'Shutting down gracefully...');
 
   closeAllowlistWatcher();
